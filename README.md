@@ -157,3 +157,7 @@ nix develop -c python -m pytest -q tests
 
 The KeePassXC side runs against a mock that follows `src/browser/BrowserAction.cpp`. The browser tests start a
 headless Brave/Chromium with a throwaway profile and skip without one.
+
+## License
+
+GPL-3.0-or-later. See `LICENSE`.
