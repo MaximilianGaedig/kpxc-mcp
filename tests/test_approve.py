@@ -280,3 +280,23 @@ def test_unanswered_dialog_notice_says_so(hs, monkeypatch):
         time.sleep(0.3)
         raise TimeoutError
     assert hs.edits() == ["locked\n\n→ Nobody answered KeePassXC's dialog; the request gave up."]
+
+
+@pytest.mark.parametrize("code,out,expected", [(0, "", "once"), (1, "Allow always: gh", "always"), (1, "", None)])
+def test_desktop_once_always_deny_buttons(tmp_path, monkeypatch, code, out, expected):
+    from kpxc_mcp import context
+    log = tmp_path / "args"
+    fake = tmp_path / "zenity"
+    fake.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {log}\nprintf '{out}'\nexit {code}\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    context.set_caller("/work/some-project")
+    try:
+        got = approve.Desktop().ask("run gh", [("once", "Allow once"), ("always", "Allow always: gh")])
+    finally:
+        context.set_caller(None)
+    args = log.read_text().splitlines()
+    assert got == expected
+    assert "--question" in args and "--ok-label=Allow once" in args and "--extra-button=Allow always: gh" in args
+    assert "--title=kpxc-mcp: some-project" in args
+    assert any(a.startswith("--text=Agent working in /work/some-project") for a in args)

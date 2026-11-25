@@ -6,11 +6,12 @@ fails is no answer; when no channel answers, the request is denied.
 """
 
 import contextlib
+import os
 import shutil
 import subprocess
 import threading
 
-from . import matrix
+from . import context, matrix
 
 TIMEOUT = 120
 NOTICE_AFTER = 2.0  # KeePassXC answers at once unless one of its own dialogs is open
@@ -32,14 +33,24 @@ class Desktop:
 
     def ask(self, text, options):
         """Returns the chosen key, None when denied or timed out."""
-        body = text if len(options) > 1 else f"{text}\n\n{options[0][1]}".rstrip()
-        base = [shutil.which("zenity"), "--no-markup", "--title=kpxc-mcp", f"--timeout={TIMEOUT}",
-                "--ok-label=Allow", "--cancel-label=Deny", f"--text={body}"]
-        if len(options) == 1:
-            args = base + ["--question", "--width=520"]
+        keys = [k for k, _ in options]
+        caller = context.default_cwd()
+        title = f"kpxc-mcp: {os.path.basename(caller.rstrip('/')) or caller}" if caller else "kpxc-mcp"
+        if caller:
+            text = f"Agent working in {caller}\n\n{text}"
+        base = [shutil.which("zenity"), "--no-markup", f"--title={title}", f"--timeout={TIMEOUT}",
+                "--cancel-label=Deny", "--icon=dialog-password"]
+        if keys == ["once", "always"]:
+            # the common case gets three buttons instead of a list to tick
+            args = base + ["--question", "--width=560", "--ok-label=Allow once",
+                           f"--extra-button={options[1][1]}", f"--text={text}"]
+        elif len(options) == 1:
+            args = base + ["--question", "--width=560", "--ok-label=Allow",
+                           f"--text={text}\n\n{options[0][1]}".rstrip()]
         else:
-            args = base + ["--list", "--radiolist", "--width=620", "--height=360", "--column=", "--column=key",
-                           "--column=Entry", "--hide-column=2", "--print-column=2"]
+            args = base + ["--list", "--radiolist", "--width=680", "--height=380", "--ok-label=Allow",
+                           f"--text={text}", "--column=", "--column=key", "--column=Entry", "--hide-column=2",
+                           "--print-column=2"]
             for i, (key, label) in enumerate(options):
                 args += ["TRUE" if i == 0 else "FALSE", key, label]
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
@@ -48,14 +59,16 @@ class Desktop:
         except subprocess.TimeoutExpired:
             self.proc.kill()
             raise NoAnswer("desktop prompt timed out")
+        out = out.strip()
+        if keys == ["once", "always"] and self.proc.returncode == 1 and out == options[1][1]:
+            return "always"  # zenity reports an extra button as exit 1 with its label on stdout
         if self.proc.returncode == 1:  # Deny
             return None
         if self.proc.returncode != 0:  # 5 = zenity's own timeout; anything else is a dialog that never showed
             raise NoAnswer(f"zenity exited with {self.proc.returncode}")
-        if len(options) == 1:
+        if len(options) == 1 or keys == ["once", "always"]:
             return options[0][0]
-        picked = out.strip()
-        return picked if picked in {k for k, _ in options} else None
+        return out if out in set(keys) else None
 
     def withdraw(self):
         if self.proc and self.proc.poll() is None:
